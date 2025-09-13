@@ -10,3 +10,9 @@ yarn-error.log
 
 # Archivos del sistema
 .DS_Store
+
+# Archivos generados por split_video
+chunks/
+
+# Archivos generados por transcribe_chunks
+transcripts/
