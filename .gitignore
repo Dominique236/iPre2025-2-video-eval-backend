@@ -16,3 +16,6 @@ chunks/
 
 # Archivos generados por transcribe_chunks
 transcripts/
+
+# Archivos generados por server
+jobs/

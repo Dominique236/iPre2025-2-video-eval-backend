@@ -1,11 +1,11 @@
-// evaluate_file.js
-// Uso: node evaluate_file.js <carpeta_transcripciones>
-// node evaluate_file.js ./transcripts
+// evaluate_file.cjs
+// Uso: node evaluate_file.cjs <carpeta_transcripciones> <archivo_presentacion>
+// node evaluate_file.cjs ./transcripts ./presentacion.pdf
 
-import fetch from "node-fetch";
-import dotenv from "dotenv";
-import fs from "fs";
-import path from "path";
+const fetch = (...args) => import('node-fetch').then(mod => mod.default(...args));
+const dotenv = require("dotenv");
+const fs = require("fs");
+const path = require("path");
 dotenv.config();
 
 const API_KEY = process.env.API_KEY;
@@ -15,6 +15,21 @@ const modelo = "google/gemini-2.5-pro";
 
 // Carpeta de transcripciones
 const transcripcionesDir = process.argv[2] || "./transcripts";
+const presentacionPath = process.argv[3];
+
+// Extrae el texto visual de la presentación usando extract_presentation_text.cjs
+function leerPresentacion(presentacionPath) {
+  if (!presentacionPath) return '';
+  try {
+    // Ejecuta el script externo y obtiene el texto
+    const { execSync } = require('child_process');
+    const output = execSync(`node ./extract_presentation_text.cjs "${presentacionPath}"`, { encoding: 'utf-8' });
+    return output.trim();
+  } catch (err) {
+    console.error('No se pudo extraer el texto de la presentación:', err.message);
+    return '';
+  }
+}
 
 // Lee y concatena solo el texto de todos los .srt de la carpeta (ignora timestamps e IDs)
 function leerTranscripciones(dir) {
@@ -70,9 +85,14 @@ Un breve comentario justificando la nota
 
 async function evaluarTranscripcion() {
   const transcripcion = leerTranscripciones(transcripcionesDir);
-  const prompt = `${promptBase}\nTRANSCRIPCIÓN:\n${transcripcion}`;
+  const textoPresentacion = leerPresentacion(presentacionPath);
+  let prompt = promptBase;
+  if (textoPresentacion) {
+    prompt += `\n\nCONTENIDO VISUAL DE LA PRESENTACIÓN EXTRAÍDO (diapositivas, PDF o PPT):\n${textoPresentacion}`;
+  }
+  prompt += `\n\nTRANSCRIPCIÓN ORAL:\n${transcripcion}`;
 
-  console.log("Enviando transcripción concatenada a Gemini...\n");
+  console.log("Enviando transcripción y contenido visual a Gemini...\n");
 
   const response = await fetch(API_URL, {
     method: "POST",
