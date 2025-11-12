@@ -9,6 +9,7 @@ export default function createUploadRoutes({ upload, jobsDir }) {
 
   router.post('/automate', upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'presentation', maxCount: 1 }]), (req, res) => {
     const files = req.files || {};
+    const { workspaceId } = req.body || {};
     const audioFile = files.audio && files.audio[0];
     const presentationFile = files.presentation && files.presentation[0];
 
@@ -51,7 +52,7 @@ export default function createUploadRoutes({ upload, jobsDir }) {
         await db.init();
         const created = await db.createVideo({
           jobExternalId: jobId,
-          workspaceId: null,
+          workspaceId: workspaceId || null,
           rubricId: null,
           title: path.basename(destAudio),
           originalPath: metadata.audio,
