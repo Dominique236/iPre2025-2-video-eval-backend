@@ -28,7 +28,7 @@ try {
   console.log('1. Dividiendo audio en chunks... (output ->', chunksDir, ')');
   spawnSync(process.execPath, ['split_file.js', audioPath, chunksDir], { stdio: 'inherit', cwd: process.cwd() });
 
-  console.log('\n2. Transcribiendo chunks... (output ->', transcriptsDir, ')');
+  console.log('\n2. Transcribiendo chunks...');
   spawnSync(process.execPath, ['transcribe_chunks.js', chunksDir, transcriptsDir], { stdio: 'inherit', cwd: process.cwd() });
 
   console.log('\n3. Evaluando transcripciones y presentación...');
