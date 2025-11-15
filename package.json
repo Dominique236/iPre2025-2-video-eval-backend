@@ -9,6 +9,7 @@
     "pg": "^8.11.0",
     "pptx-parser": "^1.1.7-beta.9",
     "pptx2json": "^0.0.10",
+    "react-icons": "^5.5.0",
     "sequelize": "^6.32.1"
   },
   "type": "module",

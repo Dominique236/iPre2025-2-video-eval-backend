@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS rubric_criteria (
   title TEXT NOT NULL,
   description TEXT,
   max_score NUMERIC DEFAULT 1,
+  weight NUMERIC DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
@@ -96,7 +97,7 @@ CREATE TABLE IF NOT EXISTS evaluations (
   rubric_id UUID REFERENCES rubrics(id),
   scores JSONB NOT NULL,
   total_score NUMERIC,
-  notes TEXT,
+  notes JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 

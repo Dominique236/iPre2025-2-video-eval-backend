@@ -116,7 +116,7 @@ export default function createUploadRoutes({ upload, jobsDir }) {
     metadata.transcribedChunks = 0;
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
 
-    const child = spawn(process.execPath, [automatePath, destAudio, destPresentation], {
+    const child = spawn(process.execPath, [automatePath, destAudio, destPresentation, jobId], {
       cwd: process.cwd(),
       env: process.env,
     });

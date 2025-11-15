@@ -29,123 +29,139 @@ export default function createVideoRoutes({ jobsDir }) {
   router.get("/workspaces/:workspaceId/pairs", async (req, res) => {
     const { workspaceId } = req.params;
     const host = `${req.protocol}://${req.get("host")}`;
+    console.log(`[GET /workspaces/${workspaceId}/pairs] start - pid=${process.pid} - ts=${new Date().toISOString()}`);
 
-    // Debug: log entrada y evitar doble ejecución
-    console.log(`[GET /workspaces/${workspaceId}/pairs] request start - pid=${process.pid}`);
-
+    let dbRows = [];
     try {
       await db.init();
       const r = await db.query(
-        "SELECT id, job_external_id, workspace_id, title, status, created_at, metadata FROM videos WHERE workspace_id = $1 ORDER BY created_at DESC",
+        "SELECT id, job_external_id, workspace_id, title, status, created_at FROM videos WHERE workspace_id = $1 ORDER BY created_at DESC",
         [workspaceId]
       );
-
-      const jobs = r.rows.map((row) => ({
-        jobId: row.job_external_id || row.id,
-        dbId: row.id,
-        workspaceId: row.workspace_id,
-        title: row.title,
-        status: row.status,
-        createdAt: row.created_at,
-        metadata: row.metadata,
-        urls: {
-          file: `${host}/jobs/${row.job_external_id || row.id}/file`,
-          presentation: `${host}/jobs/${row.job_external_id || row.id}/presentation`,
-          thumbnail: `${host}/jobs/${row.job_external_id || row.id}/thumbnail`,
-        },
-      }));
-
-      // usamos safeSendJson (si falla, no intentará otro res.json desde aquí)
-      const sent = safeSendJson(res, jobs, "db");
-      if (sent) return;
-      // si por alguna razón no se envió, continuamos al fallback para intentar responder de otra forma
-    } catch (dbError) {
-      console.warn("DB error, falling back to filesystem:", dbError && dbError.message);
-      // no retornamos acá - vamos al bloque de filesystem
+      dbRows = r.rows || [];
+      console.log(`[GET /workspaces/${workspaceId}/pairs] loaded ${dbRows.length} rows from DB`);
+    } catch (dbErr) {
+      console.warn(`[GET /workspaces/${workspaceId}/pairs] DB error: ${dbErr?.message}`);
+      dbRows = []; // permitimos fallback a filesystem
     }
 
-    // --- fallback filesystem (solo se ejecuta si no se respondió aún) ---
-    try {
-      const jobs = fs
-        .readdirSync(jobsDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => {
-          const id = d.name;
-          const metaPath = path.join(jobsDir, id, "metadata.json");
-          if (!fs.existsSync(metaPath)) return { jobId: id };
-          try {
-            const raw = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-            // filtrar por workspaceId si la metadata lo contiene
-            if (raw.workspaceId && String(raw.workspaceId) !== String(workspaceId)) {
-              return null; // será filtrado luego
-            }
-            const meta = {
-              jobId: raw.jobId || id,
-              title: raw.title || null,
-              workspaceId: raw.workspaceId || null,
-              status: raw.status || "unknown",
-              createdAt: raw.createdAt || null,
-            };
-            meta.urls = {
-              file: `${host}/jobs/${id}/file`,
-              presentation: `${host}/jobs/${id}/presentation`,
-              thumbnail: `${host}/jobs/${id}/thumbnail`,
-            };
-            return meta;
-          } catch (err) {
-            return { jobId: id, error: "invalid metadata" };
-          }
-        })
-        .filter(Boolean);
-
-      const sent = safeSendJson(res, jobs, "fs");
-      if (sent) return;
-      // si safeSendJson no envió (headers already sent), solo loggear
-      console.warn("[fallback] response could not be sent because headers already sent");
-    } catch (fsError) {
-      console.error("Filesystem error when listing jobs:", fsError && fsError.message);
-      if (!res.headersSent) {
-        return res.status(500).json({ error: fsError.message });
-      } else {
-        console.warn("Cannot send 500 because headers already sent");
+    // Helper: leer metadata.json seguro dentro de jobsDir
+    const readMeta = (jobId) => {
+      const metaPath = path.join(jobsDir, jobId, "metadata.json");
+      if (!fs.existsSync(metaPath)) return null;
+      try {
+        const raw = fs.readFileSync(metaPath, "utf8");
+        const parsed = JSON.parse(raw);
+        return parsed;
+      } catch (e) {
+        console.warn(`[GET /workspaces/${workspaceId}/pairs] invalid metadata.json for ${jobId}: ${e.message}`);
+        return { _invalid: true };
       }
+    };
+
+    // Si la BD no devolvió nada, listamos todas las carpetas del jobsDir (filesystem-only mode)
+    let jobs = [];
+    
+    // Si la BD devolvió rows, por cada row forzamos la lectura de metadata.json y la usamos para sobrescribir
+    jobs = dbRows.map((row) => {
+      const jobId = row.job_external_id || row.id;
+      const meta = readMeta(jobId);
+      const usedSource = meta ? (meta._invalid ? "meta_invalid" : "meta_file") : "db_only";
+      if (!meta) {
+        // no hay metadata.json => usar lo de la BD (pero sin campo metadata antiguo)
+        return {
+          jobId,
+          dbId: row.id,
+          workspaceId: row.workspace_id,
+          title: row.title || null,
+          status: row.status || "unknown",
+          createdAt: row.created_at || null,
+          metadata: null,
+          metadataSource: "db",
+          urls: buildUrls(jobId)
+        };
+      } else if (meta._invalid) {
+        return {
+          jobId,
+          dbId: row.id,
+          workspaceId: row.workspace_id,
+          title: row.title || meta.title || null,
+          status: meta.status || row.status || "unknown",
+          createdAt: meta.createdAt || row.created_at || null,
+          metadata: null,
+          metadataSource: "invalid_file",
+          urls: buildUrls(jobId)
+        };
+      } else {
+        // metadata válido: usarlo como verdad (sobrescribe)
+        return {
+          jobId,
+          dbId: row.id,
+          workspaceId: row.workspace_id || meta.workspaceId || null,
+          title: meta.title || row.title || null,
+          status: meta.status || row.status || "unknown",
+          createdAt: meta.createdAt || row.created_at || null,
+          metadata: meta,
+          metadataSource: "file",
+          urls: buildUrls(jobId)
+        };
+      }
+    });
+
+    // small util
+    function buildUrls(id) {
+      return {
+        file: `${host}/jobs/${id}/file`,
+        presentation: `${host}/jobs/${id}/presentation`,
+        thumbnail: `${host}/jobs/${id}/thumbnail`
+      };
     }
+
+    console.log(`[GET /workspaces/${workspaceId}/pairs] returning ${jobs.length} jobs (first metadataSource=${jobs[0]?.metadataSource})`);
+    return res.json(jobs);
   });
 
-  // Get metadata for a single job
-  router.get('/jobs/:id', (req, res) => {
-    const id = req.params.id;
-    (async () => {
-      try {
-        await db.init();
-        const row = await db.getVideoByJobExternalId(id);
-        if (row) {
-          const host = req.protocol + '://' + req.get('host');
-          row.urls = {
-            file: `${host}/jobs/${id}/file`,
-            presentation: `${host}/jobs/${id}/presentation`,
-            thumbnail: `${host}/jobs/${id}/thumbnail`
-          };
-          return res.json(row);
-        }
-      } catch (e) {
-        // fallback to filesystem
-      }
-      const metaPath = path.join(jobsDir, id, 'metadata.json');
-      if (!fs.existsSync(metaPath)) return res.status(404).json({ error: 'job not found' });
-      try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-        const host = req.protocol + '://' + req.get('host');
-        meta.urls = {
-          file: `${host}/jobs/${id}/file`,
-          presentation: `${host}/jobs/${id}/presentation`,
-          thumbnail: `${host}/jobs/${id}/thumbnail`
-        };
-        res.json(meta);
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    })();
+    router.get("/jobs/:id", async (req, res) => {
+    const { id } = req.params;
+    const host = `${req.protocol}://${req.get("host")}`;
+    console.log(`[GET /jobs/${id}] start`);
+
+    let dbRow = null;
+    try {
+      await db.init();
+      dbRow = await db.getVideoByJobExternalId(id);
+    } catch (e) {
+      console.warn(`[GET /jobs/${id}] DB read failed: ${e.message}`);
+    }
+
+    const metaPath = path.join(jobsDir, id, "metadata.json");
+    if (!fs.existsSync(metaPath)) {
+      return res.status(404).json({ error: "job not found" });
+    }
+
+    let meta;
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    } catch (e) {
+      console.error(`[GET /jobs/${id}] invalid metadata.json: ${e.message}`);
+      return res.status(500).json({ error: "invalid metadata.json" });
+    }
+
+    const merged = {
+      jobId: id,
+      workspaceId: dbRow?.workspace_id || meta.workspaceId || null,
+      title: dbRow?.title || meta.title || null,
+      ...meta,
+      urls: {
+        file: `${host}/jobs/${id}/file`,
+        presentation: `${host}/jobs/${id}/presentation`,
+        thumbnail: `${host}/jobs/${id}/thumbnail`
+      },
+      metadataSource: "file"
+    };
+
+    console.log(`[GET /jobs/${id}] returning metadata from file (merged)`);
+    return res.json(merged);
   });
 
   // Serve the main media file (audio or video) for a job

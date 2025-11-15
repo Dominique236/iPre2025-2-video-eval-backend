@@ -8,9 +8,10 @@ import fs from 'fs';
 import multer from 'multer';
 
 import createVideoRoutes from './routes/video_routes.js';
-import createEvaluateRoutes from './routes/upload_routes.js';
-import createUploadRoutes from './routes/evaluate_routes.js';
+import createEvaluateRoutes from './routes/evaluate_routes.js';
+import createUploadRoutes from './routes/upload_routes.js';
 import createWorkspaceRoutes from './routes/workspace_routes.js';
+import createDashboardRoutes from './routes/dashboard_routes.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -46,8 +47,9 @@ app.get('/health', (req, res) => {
 // Mount routers
 app.use('/', createVideoRoutes({ jobsDir }));
 app.use('/', createEvaluateRoutes({ upload, jobsDir }));
-app.use('/', createUploadRoutes({ upload }));
+app.use('/', createUploadRoutes({ upload, jobsDir }));
 app.use('/', createWorkspaceRoutes());
+app.use('/', createDashboardRoutes({ upload, jobsDir }));
 
 app.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);

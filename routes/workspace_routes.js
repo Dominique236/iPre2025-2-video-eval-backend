@@ -22,13 +22,30 @@ export default function createWorkspaceRoutes() {
     try {
       await db.init();
       const result = await db.getWorkspaces({});
-      res.json({ workspaces: result });
+            console.log('[GET /workspaces] fetched workspaces count=', (result && result.length) || 0, 'first=', result && result[0] ? { id: result[0].id, name: result[0].name, created_at: result[0].created_at } : null);
+            res.json({ workspaces: result });
     } catch (e) {
       // don't fail the entire endpoint if DB is not configured; return empty list with warning
       console.error('Workspaces list error:', e && e.stack ? e.stack : e);
       res.status(200).json({ workspaces: [], error: `DB unavailable: ${e && e.message ? e.message : String(e)}` });
     }
     });
+
+        // Debug: show DB env info (host/name). Useful to confirm which DB the server uses.
+        router.get('/debug/dbinfo', async (req, res) => {
+            try {
+                const info = {
+                    DATABASE_URL: process.env.DATABASE_URL ? String(process.env.DATABASE_URL) : null,
+                    DB_HOST: process.env.DB_HOST || null,
+                    DB_NAME: process.env.DB_NAME || null,
+                    PGHOST: process.env.PGHOST || null,
+                    PGDATABASE: process.env.PGDATABASE || null
+                };
+                res.json({ env: info });
+            } catch (e) {
+                res.status(500).json({ error: e.message });
+            }
+        });
 
     // Create a rubric under a workspace
     router.post('/workspaces/:workspaceId/rubrics', async (req, res) => {
@@ -42,11 +59,45 @@ export default function createWorkspaceRoutes() {
             let insertedCriteria = [];
             if (Array.isArray(criteria) && criteria.length > 0) {
                 // normalize criteria to expected shape
-                const norm = criteria.map((c, i) => ({ idx: c.idx ?? i, key: c.key ?? null, title: c.title || `criteria_${i}`, description: c.description || null, max_score: c.max_score ?? 1 }));
+                const norm = criteria.map((c, i) => ({ idx: c.idx ?? i, key: c.key ?? null, title: c.title || `criteria_${i}`, description: c.description || null, weight: c.weight ?? 0, max_score: c.max_score ?? 1 }));
                 insertedCriteria = await db.createRubricCriteriaBulk(rub.id, norm);
             }
             res.status(201).json({ rubric: rub, criteria: insertedCriteria });
         } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Obtener una rúbrica por el ID del espacio de trabajo
+    router.get('/workspaces/:workspaceId/rubric', async (req, res) => {
+        const { workspaceId } = req.params;
+        try {
+            await db.init();
+            // Obtener la rúbrica asociada al workspace
+            const rubric = await db.query(
+            'SELECT * FROM rubrics WHERE workspace_id = $1 LIMIT 1',
+            [workspaceId]
+            );
+
+            if (!rubric.rows || rubric.rows.length === 0) {
+            return res.status(404).json({ error: 'No rubric found for this workspace' });
+            }
+
+            const rub = rubric.rows[0];
+
+            // Obtener criterios asociados a esa rúbrica
+            const criteria = await db.query(
+            'SELECT * FROM rubric_criteria WHERE rubric_id = $1 ORDER BY idx ASC',
+            [rub.id]
+            );
+
+            res.json({
+            rubric: rub,
+            criteria: criteria.rows
+            });
+
+        } catch (e) {
+            console.error('[GET /workspaces/:workspaceId/rubric] error:', e);
             res.status(500).json({ error: e.message });
         }
     });
